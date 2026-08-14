@@ -1,9 +1,38 @@
-from flask import Flask, request, jsonify, render_template_string
-import json
+from flask import Flask, request, jsonify, render_template_string, redirect, url_for
+from flask_sqlalchemy import SQLAlchemy
+from dotenv import load_dotenv
 import os
 
+# Carrega as variáveis do arquivo .env
+load_dotenv()
+
 app = Flask(__name__)
-DATA_FILE = "dados.json"
+
+# Configura o banco de dados. Usa SQLite local como padrão se a variavel não for achada.
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL') or 'sqlite:///banco_local.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+
+# Modelo da Tabela do Banco de Dados
+class Registro(db.Model):
+    __tablename__ = 'registros'
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(150), nullable=False)
+    telefone = db.Column(db.String(50), nullable=False)
+    valor = db.Column(db.Float, nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "nome": self.nome,
+            "telefone": self.telefone,
+            "valor": self.valor
+        }
+
+# Cria as tabelas se não existirem
+with app.app_context():
+    db.create_all()
 
 TEMPLATE_HTML = """
 <!DOCTYPE html>
@@ -22,6 +51,8 @@ TEMPLATE_HTML = """
             --text-secondary: #94a3b8;
             --accent-color: #3b82f6;
             --accent-hover: #2563eb;
+            --danger-color: #ef4444;
+            --danger-hover: #dc2626;
         }
 
         body {
@@ -98,7 +129,7 @@ TEMPLATE_HTML = """
             border-color: var(--accent-color);
         }
 
-        button {
+        button.btn-primary {
             background: var(--accent-color);
             color: white;
             border: none;
@@ -112,7 +143,7 @@ TEMPLATE_HTML = """
             margin-top: 1rem;
         }
 
-        button:hover {
+        button.btn-primary:hover {
             background: var(--accent-hover);
             transform: translateY(-2px);
         }
@@ -158,10 +189,32 @@ TEMPLATE_HTML = """
             color: var(--text-secondary);
         }
 
+        .item-actions {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
         .item-value {
             font-size: 1.5rem;
             font-weight: 800;
             color: #10b981;
+        }
+        
+        .btn-delete {
+            background: var(--danger-color);
+            color: white;
+            border: none;
+            padding: 0.5rem 0.8rem;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s, transform 0.1s;
+        }
+        
+        .btn-delete:hover {
+            background: var(--danger-hover);
+            transform: scale(1.05);
         }
 
         .empty-state {
@@ -188,31 +241,34 @@ TEMPLATE_HTML = """
                     <label for="valor">Valor (R$)</label>
                     <input type="number" id="valor" name="valor" step="0.01" placeholder="Ex: 150.50" required>
                 </div>
-                <button type="submit">Cadastrar</button>
+                <button type="submit" class="btn-primary">Cadastrar</button>
             </form>
         </div>
 
         <div class="glass-panel" style="animation-delay: 0.2s;">
-            <h2>Lista de Registros</h2>
+            <h2>Lista de Registros (Banco de Dados)</h2>
             {% if registros %}
             <ul class="data-list">
                 {% for r in registros %}
-                {% if r is mapping %}
                 <li class="data-item">
                     <div class="item-info">
                         <span class="item-name">{{ r.nome }}</span>
                         <span class="item-phone">📞 {{ r.telefone }}</span>
                     </div>
-                    <div class="item-value">
-                        R$ {{ "%.2f"|format(r.valor) }}
+                    <div class="item-actions">
+                        <div class="item-value">
+                            R$ {{ "%.2f"|format(r.valor) }}
+                        </div>
+                        <form action="/delete/{{ r.id }}" method="POST" onsubmit="return confirm('Tem certeza que deseja excluir?');">
+                            <button type="submit" class="btn-delete" title="Excluir">Remover</button>
+                        </form>
                     </div>
                 </li>
-                {% endif %}
                 {% endfor %}
             </ul>
             {% else %}
             <div class="empty-state">
-                <p>Nenhum registro encontrado.</p>
+                <p>Nenhum registro encontrado no banco de dados.</p>
             </div>
             {% endif %}
         </div>
@@ -220,21 +276,6 @@ TEMPLATE_HTML = """
 </body>
 </html>
 """
-
-
-def carregar_dados():
-    if not os.path.exists(DATA_FILE):
-        return []
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return []
-
-
-def salvar_dados(dados):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(dados, f, indent=4, ensure_ascii=False)
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -247,52 +288,60 @@ def index():
         if nome and telefone and valor:
             try:
                 valor_float = float(valor)
-                novo_registro = {"nome": nome, "telefone": telefone, "valor": valor_float}
-                dados = carregar_dados()
-                dados.append(novo_registro)
-                salvar_dados(dados)
+                novo_registro = Registro(nome=nome, telefone=telefone, valor=valor_float)
+                db.session.add(novo_registro)
+                db.session.commit()
+                return redirect(url_for('index'))
             except ValueError:
                 pass
                 
-    dados = carregar_dados()
-    return render_template_string(TEMPLATE_HTML, registros=dados)
+    # Lê todos os registros do banco
+    registros = Registro.query.all()
+    return render_template_string(TEMPLATE_HTML, registros=registros)
 
+@app.route("/delete/<int:id>", methods=["POST"])
+def delete_registro(id):
+    registro = Registro.query.get(id)
+    if registro:
+        db.session.delete(registro)
+        db.session.commit()
+    return redirect(url_for('index'))
 
 @app.route("/api/registro", methods=["POST"])
-def criar_registro():
+def criar_registro_api():
     conteudo = request.get_json()
 
     if not conteudo:
-        return jsonify(
-            {"erro": "O corpo da requisição precisa ser um JSON válido."}
-        ), 400
+        return jsonify({"erro": "O corpo da requisição precisa ser um JSON válido."}), 400
 
     nome = conteudo.get("nome")
     telefone = conteudo.get("telefone")
     valor = conteudo.get("valor")
 
     if not nome or not telefone or valor is None:
-        return jsonify(
-            {"erro": "Os campos 'nome', 'telefone' e 'valor' são obrigatórios."}
-        ), 400
+        return jsonify({"erro": "Os campos 'nome', 'telefone' e 'valor' são obrigatórios."}), 400
 
-    novo_registro = {"nome": nome, "telefone": telefone, "valor": valor}
+    novo_registro = Registro(nome=nome, telefone=telefone, valor=float(valor))
+    db.session.add(novo_registro)
+    db.session.commit()
 
-    dados = carregar_dados()
-    dados.append(novo_registro)
-    salvar_dados(dados)
-
-    return jsonify(
-        {"mensagem": "Registro gravado com sucesso!", "registro": novo_registro}
-    ), 201
-
+    return jsonify({
+        "mensagem": "Registro gravado com sucesso no banco de dados!", 
+        "registro": novo_registro.to_dict()
+    }), 201
 
 @app.route("/api/registros", methods=["GET"])
-def listar_registros():
-    dados = carregar_dados()
-    dados.append("Endereco")
+def listar_registros_api():
+    registros = Registro.query.all()
+    dados = [r.to_dict() for r in registros]
     return jsonify(dados), 200
 
+@app.route("/api/registro/<int:id>", methods=["GET"])
+def buscar_registro_api(id):
+    registro = Registro.query.get(id)
+    if not registro:
+        return jsonify({"erro": "Registro não encontrado."}), 404
+    return jsonify(registro.to_dict()), 200
 
 if __name__ == "__main__":
-    app.run(debug=True, port=1753)
+    app.run(host="0.0.0.0", debug=True, port=1755)
