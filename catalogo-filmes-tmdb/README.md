@@ -5,7 +5,7 @@ Aplicação desenvolvida para a disciplina do professor @siriani.
 ## Tecnologias
 - Backend: Node.js (Express)
 - Banco de Dados: MariaDB
-- Frontend: HTML/CSS/JS puro (sem frameworks para maior desempenho e controle, seguindo diretrizes premium de UX/UI)
+- Frontend: React (Vite SPA com design moderno e componentes reutilizáveis)
 - Integração: TMDB API
 
 ## Como executar
